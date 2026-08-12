@@ -1,4 +1,4 @@
-# KnasWatch · קנס-ווטש
+# KnasWatch · בודק קנסות
 
 A daily checker for Israeli traffic fines. It queries the Enforcement and
 Collection Authority portal ([ecom.gov.il](https://ecom.gov.il/voucherspa/input/318))
