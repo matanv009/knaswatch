@@ -15,6 +15,9 @@ env/
 *.egg-info/
 .pytest_cache/
 
+# Local working notes, not part of the published project.
+HANDOFF.md
+
 # Editors / OS
 .vscode/
 .idea/
