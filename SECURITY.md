@@ -137,7 +137,23 @@ Four, all pinned in `requirements.txt`: `playwright`, `keyring`, `platformdirs`,
 `httpx`. The dependency surface is kept small on purpose — every added package is
 code with access to a process that handles identifying numbers.
 
-## Reporting a problem
+## Reporting a vulnerability
 
-Open an issue describing the weakness. Please do not include a real ID number,
-licence number, or Telegram bot token in an issue or a log excerpt.
+**Please report security problems privately, not as a public issue.** Use
+GitHub's private vulnerability reporting: the **Security** tab of this
+repository → **Report a vulnerability**. Only the maintainers can see it.
+
+A public issue describing a flaw is readable by everyone the moment it is
+posted, including before there is a fix — and this tool handles identity
+documents, so that window matters. Ordinary bugs, questions and feature ideas
+are very welcome as normal issues; it is only weaknesses that should start
+privately.
+
+Whatever the channel, **never include a real ID number, driver's licence number,
+Telegram bot token, or chat id** in a report, a screenshot, or a log excerpt.
+The log at `%LOCALAPPDATA%\KnasWatch\knaswatch.log` masks runs of seven or more
+digits, but do check an excerpt before pasting it.
+
+Expect an acknowledgement within a few days. This is a personal project with no
+bounty programme and no formal response window; it is maintained on a
+best-effort basis, and that is worth knowing before you rely on it.
