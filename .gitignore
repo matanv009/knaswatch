@@ -1,0 +1,22 @@
+# KnasWatch stores no secrets in the repo by design (see SECURITY.md).
+# These rules are belt-and-suspenders in case a user redirects output here.
+
+*.log
+*.debug.json
+knaswatch-debug/
+browser-profile/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
