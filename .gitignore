@@ -18,8 +18,9 @@ env/
 # Local working notes, not part of the published project.
 HANDOFF.md
 
-# Personal repair script: it contains real profile nicknames, so it stays local.
+# Personal helper scripts: they contain real profile nicknames, so they stay local.
 setup_profiles.py
+add_recipient_local.py
 
 # Editors / OS
 .vscode/

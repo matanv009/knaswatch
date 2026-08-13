@@ -162,17 +162,22 @@ def cmd_test_notify(args) -> int:
         print(f"Telegram is not configured. Run:  {INVOCATION} telegram")
         return 1
 
-    recipients = vault.load_recipients()
-    failed = broadcast(
-        config.token, recipients, "*test*",
-        "🔔 <b>KnasWatch</b> - בדיקת התראות. אם ההודעה הגיעה, הכול מחובר.",
-    )
-    delivered = [r.label for r in recipients if r.label not in failed]
-    for label in delivered:
-        print(f"  sent to {label}")
-    for label in failed:
-        print(f"  ! failed for {label}")
-    return 1 if failed else 0
+    text = "🔔 <b>KnasWatch</b> - בדיקת התראות. אם ההודעה הגיעה, הכול מחובר."
+
+    # Deliberately not broadcast(): that skips recipients whose scope does not
+    # match the profile being reported, and a connection test must reach
+    # everyone. Reporting a skipped recipient as "sent" hid a real failure once.
+    failures = 0
+    for recipient in vault.load_recipients():
+        try:
+            send_to_chat(config.token, recipient.chat_id, text)
+        except NotifyError as exc:
+            failures += 1
+            print(f"  ! failed for {recipient.label}: {exc}")
+            continue
+        print(f"  sent to {recipient.describe()}")
+
+    return 1 if failures else 0
 
 
 def cmd_remove_recipient(args) -> int:
