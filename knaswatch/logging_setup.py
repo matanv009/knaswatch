@@ -7,6 +7,7 @@ that a future careless log line cannot leak one either.
 
 import logging
 import re
+import sys
 from logging.handlers import RotatingFileHandler
 
 from .state import LOG_FILE, ensure_dir
@@ -31,8 +32,27 @@ class RedactingFilter(logging.Filter):
         return True
 
 
+def make_console_safe() -> None:
+    """Stop Hebrew output from killing the process on a non-UTF-8 console.
+
+    A scheduled task inherits the legacy code page (cp1252 here), so printing a
+    Hebrew profile name raised UnicodeEncodeError and the whole run died before
+    it could log anything - silently, because pythonw.exe has no stderr to show
+    the traceback on. Interactive shells with PYTHONIOENCODING=utf-8 never hit
+    it, which is exactly why it survived testing.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def setup_logging(verbose: bool = False) -> logging.Logger:
     ensure_dir()
+    make_console_safe()
     logger = logging.getLogger("knaswatch")
     if logger.handlers:
         return logger
@@ -48,9 +68,12 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     file_handler.addFilter(redactor)
     logger.addHandler(file_handler)
 
-    console = logging.StreamHandler()
-    console.setFormatter(logging.Formatter("%(message)s"))
-    console.addFilter(redactor)
-    logger.addHandler(console)
+    # Under pythonw.exe there is no console at all and sys.stderr is None;
+    # attaching a stream handler to it would raise on every single record.
+    if sys.stderr is not None:
+        console = logging.StreamHandler()
+        console.setFormatter(logging.Formatter("%(message)s"))
+        console.addFilter(redactor)
+        logger.addHandler(console)
 
     return logger

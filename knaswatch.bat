@@ -9,7 +9,18 @@ setlocal
 set "HERE=%~dp0"
 set "VENV_PY=%HERE%.venv\Scripts\python.exe"
 
+REM "python -m knaswatch" resolves the package from the current directory, so
+REM without this the launcher fails with "No module named knaswatch" whenever it
+REM is run from anywhere else - including from Task Scheduler.
+cd /d "%HERE%"
+
 if not exist "%VENV_PY%" goto :no_venv
+
+REM A virtual environment can exist with nothing installed in it, which used to
+REM greet new users with a ModuleNotFoundError traceback instead of an answer.
+"%VENV_PY%" -c "import playwright, keyring, platformdirs, httpx" >nul 2>&1
+if errorlevel 1 goto :no_deps
+
 if "%~1"=="" goto :menu
 
 "%VENV_PY%" -m knaswatch %*
@@ -74,12 +85,21 @@ goto :menu
 
 :no_venv
 echo.
-echo   KnasWatch is not installed yet - the .venv folder is missing.
-echo   Open a terminal in this folder and run these three commands:
+echo   KnasWatch is not installed yet.
 echo.
-echo       python -m venv .venv
-echo       .venv\Scripts\python.exe -m pip install -r requirements.txt
-echo       .venv\Scripts\python.exe -m playwright install chromium
+echo   Double-click  install.bat  in this folder, wait for it to finish,
+echo   then run this file again.
+echo.
+if "%~1"=="" pause
+exit /b 1
+
+
+:no_deps
+echo.
+echo   KnasWatch is only half installed - the dependencies are missing.
+echo.
+echo   Double-click  install.bat  in this folder. It repairs an unfinished
+echo   install, and is safe to run again.
 echo.
 if "%~1"=="" pause
 exit /b 1

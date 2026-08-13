@@ -58,7 +58,22 @@ Full threat model, including what this does *not* protect against: [SECURITY.md]
 
 ## Install
 
-Requires Python 3.10+ and Google Chrome.
+Requires [Python 3.10+](https://www.python.org/downloads/) (tick **"Add
+python.exe to PATH"** while installing) and Google Chrome.
+
+**On Windows, no terminal needed:**
+
+1. Download this repository — green **Code** button → **Download ZIP** — and
+   unzip it somewhere permanent, like your Documents folder.
+2. Double-click **`install.bat`** and wait. It creates the virtual environment,
+   installs the four dependencies, and downloads the browser.
+3. Double-click **`knaswatch.bat`** and choose option **1** to set up.
+
+`install.bat` is safe to run again; it repairs a half-finished install. If you
+launch `knaswatch.bat` before installing, it tells you so rather than failing
+with `ModuleNotFoundError: No module named 'playwright'`.
+
+Prefer the command line, or on macOS/Linux:
 
 ```bash
 git clone <your-fork-url> knaswatch
@@ -70,8 +85,7 @@ python -m venv .venv
 
 Calling `.venv\Scripts\python.exe` directly avoids activation entirely, which
 saves a common mistake: a plain `python` picks up your system installation,
-where the dependencies are not installed, and fails with
-`ModuleNotFoundError: No module named 'playwright'`.
+where the dependencies are not installed.
 
 ## Set up
 

@@ -21,6 +21,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
+from . import INVOCATION
 from .state import DATA_DIR
 from .vault import Credentials
 
@@ -316,8 +317,8 @@ def _run_once(credentials: Credentials, headless: bool, interactive: bool) -> Ch
                                 summary="נדרש אימות CAPTCHA - הבדיקה לא הושלמה",
                                 detail=(
                                     "reCAPTCHA asked for an image challenge. Run "
-                                    "'python -m knaswatch check --profile <name>' "
-                                    "yourself and answer it in the window that opens."
+                                    f"'{INVOCATION} check --profile <name>' yourself "
+                                    "and answer it in the window that opens."
                                 ),
                                 retryable=False,
                             )

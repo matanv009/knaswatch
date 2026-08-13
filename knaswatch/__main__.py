@@ -151,6 +151,30 @@ def cmd_add_recipient(args) -> int:
     return 0
 
 
+def cmd_test_notify(args) -> int:
+    """Prove delivery works without visiting the government site.
+
+    Useful because a check that finds nothing is silent by design, so there is
+    otherwise no way to tell "notifications work" from "nothing to report".
+    """
+    config = vault.load_telegram()
+    if config is None:
+        print(f"Telegram is not configured. Run:  {INVOCATION} telegram")
+        return 1
+
+    recipients = vault.load_recipients()
+    failed = broadcast(
+        config.token, recipients, "*test*",
+        "🔔 <b>KnasWatch</b> - בדיקת התראות. אם ההודעה הגיעה, הכול מחובר.",
+    )
+    delivered = [r.label for r in recipients if r.label not in failed]
+    for label in delivered:
+        print(f"  sent to {label}")
+    for label in failed:
+        print(f"  ! failed for {label}")
+    return 1 if failed else 0
+
+
 def cmd_remove_recipient(args) -> int:
     recipients = vault.load_recipients()
     if not recipients:
@@ -547,6 +571,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="only alert them about this profile (repeatable; "
                         "omit for every profile)")
     p.set_defaults(func=cmd_add_recipient)
+
+    sub.add_parser("test-notify", help="send a test message to every recipient").set_defaults(
+        func=cmd_test_notify)
 
     p = sub.add_parser("remove-recipient", help="stop sending alerts to someone")
     p.add_argument("name", help="their label or chat id")

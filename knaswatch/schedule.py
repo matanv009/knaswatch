@@ -112,9 +112,15 @@ def create_task(at_time: str = "09:00") -> str:
         triggers=triggers,
         user=escape(getpass.getuser()),
         command=escape(_python_for_background()),
-        # --if-stale 20 keeps this to roughly one real visit per day: the later
-        # triggers return immediately unless the earlier one failed.
-        arguments=escape("-m knaswatch check --all --unattended --if-stale 20"),
+        # run.py rather than "-m knaswatch": the module form resolves the package
+        # from the working directory, which a scheduled task cannot be relied on
+        # to provide, and the resulting ImportError is invisible under pythonw.
+        # --if-stale 12 keeps this to one real visit per day while letting the
+        # morning trigger win every day. A 20-hour threshold meant that a check
+        # which succeeded in the evening blocked the next morning's run, so the
+        # daily check drifted later and later and stayed there.
+        arguments=escape(f'"{project_root / "run.py"}" '
+                         "check --all --unattended --if-stale 12"),
         workdir=escape(str(project_root)),
     )
 
