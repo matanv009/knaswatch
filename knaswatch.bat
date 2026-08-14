@@ -45,10 +45,11 @@ echo     8.  Send alerts to another person's Telegram
 echo     9.  Daily "all clear" message on/off
 echo    10.  Turn on the daily automatic check
 echo    11.  Turn off the daily automatic check
+echo    12.  Finish an interrupted check (after a CAPTCHA message)
 echo     0.  Exit
 echo.
 set "CHOICE="
-set /p "CHOICE=  Choose 0-11 and press Enter: "
+set /p "CHOICE=  Choose 0-12 and press Enter: "
 
 REM Empty means the user just pressed Enter, or that there is no interactive
 REM input at all (piped/redirected). Exit rather than loop forever.
@@ -65,10 +66,13 @@ if "%CHOICE%"=="8" set "ARGS=add-recipient"    & goto :run
 if "%CHOICE%"=="9" set "ARGS=config --toggle-all-clear" & goto :run
 if "%CHOICE%"=="10" set "ARGS=schedule"        & goto :run
 if "%CHOICE%"=="11" set "ARGS=unschedule"      & goto :run
+REM --if-stale skips whoever already succeeded today, so answering a CAPTCHA for
+REM one person does not send the rest of the household back to the site.
+if "%CHOICE%"=="12" set "ARGS=check --all --if-stale 12" & goto :run
 if "%CHOICE%"=="0" exit /b 0
 
 echo.
-echo   Please type a number from 0 to 11.
+echo   Please type a number from 0 to 12.
 echo.
 pause
 goto :menu

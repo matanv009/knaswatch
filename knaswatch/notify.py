@@ -6,6 +6,7 @@ are never passed to this module, let alone sent over the network.
 
 import html
 import logging
+import sys
 import time
 from typing import NamedTuple, Optional
 
@@ -183,11 +184,21 @@ def format_result(profile: str, result: CheckResult) -> str:
         return f"✅ <b>KnasWatch</b> - אין קנסות עבור <b>{name}</b>"
 
     if result.status == STATUS_CHALLENGE:
+        # Deliberately not 'check --profile <name>'. The nicknames are Hebrew,
+        # and a Hebrew argument cannot be typed into a Windows console - so the
+        # message used to name a command its reader was unable to run. The menu
+        # entry needs no typing, and --if-stale means the people already checked
+        # today are not sent back to the site for nothing.
+        if sys.platform == "win32":
+            how = ("פתח את <code>knaswatch.bat</code> ובחר באפשרות 12 "
+                   "(<code>Finish an interrupted check</code>).")
+        else:
+            how = ("הרץ במחשב:\n"
+                   f"<code>{html.escape(INVOCATION)} check --all --if-stale 12</code>")
         return (
             f"🔐 <b>KnasWatch</b> - האתר ביקש אימות CAPTCHA עבור <b>{name}</b>\n\n"
-            "הבדיקה לא הושלמה. הרץ במחשב:\n"
-            f"<code>{html.escape(INVOCATION)} check --profile {name}</code>\n"
-            "וענה על האימות בחלון שנפתח."
+            f"הבדיקה לא הושלמה. {how}\n"
+            "פתור את האימות בחלון שנפתח, והבדיקה תמשיך מעצמה."
         )
 
     return (

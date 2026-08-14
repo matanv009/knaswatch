@@ -11,10 +11,12 @@ a human - no automation flags are stripped, no fingerprint is spoofed. When the
 site does challenge, the tool stops and asks the person to answer it themselves.
 """
 
+import hashlib
 import logging
 import random
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from playwright.sync_api import Error as PlaywrightError
@@ -37,6 +39,11 @@ FIELD_LICENCE = "#k_id_num"
 
 SUBMIT_ENDPOINT = "PostIdentificationData"
 BASKET_ENDPOINTS = ("GetBasket", "GetBasketSummary")
+
+# Every profile shared this one directory before browser profiles were split per
+# person. It is migrated on first use rather than left behind; see
+# _claim_legacy_profile.
+LEGACY_PROFILE_DIR = DATA_DIR / "browser-profile"
 
 NAV_TIMEOUT_MS = 60_000
 SUBMIT_WAIT_MS = 25_000
@@ -266,9 +273,48 @@ def _challenge_visible(page) -> bool:
         return False
 
 
-def _launch(pw, headless: bool):
+def browser_profile_dir(profile: str) -> Path:
+    """Where this person's browser profile lives - one directory per person.
+
+    Everyone used to share a single profile, which meant one browser session
+    submitted several different identity documents minutes apart. That is the
+    least human thing this tool does, and a shared cookie jar also lets one
+    person's damaged reCAPTCHA score be inherited by the whole household.
+
+    The directory is named after a hash of the nickname rather than the nickname
+    itself, for two reasons: the nicknames here are real names, which have no
+    business being written into a path; and a non-ASCII path handed to Chrome has
+    been a dependable source of encoding failures on Windows.
+    """
+    digest = hashlib.sha256(profile.encode("utf-8")).hexdigest()[:12]
+    return DATA_DIR / f"browser-profile--{digest}"
+
+
+def _claim_legacy_profile(target: Path) -> None:
+    """Hand the old shared profile to the first person who asks for one.
+
+    That directory holds whatever standing the tool has built up with reCAPTCHA,
+    so it is moved rather than discarded. Everyone else starts with a fresh
+    profile and may be challenged once while it settles. Copying it per person
+    would be worse than a cold start: the same reCAPTCHA cookie appearing in two
+    "different" browsers links them together anyway.
+    """
+    if target.exists() or not LEGACY_PROFILE_DIR.is_dir():
+        return
+    if any(DATA_DIR.glob("browser-profile--*")):
+        return  # somebody has already claimed it
+    try:
+        LEGACY_PROFILE_DIR.rename(target)
+        log.info("Reusing the previous shared browser profile for this person.")
+    except OSError as exc:
+        # Not fatal: a fresh profile is created below instead.
+        log.debug("Could not reuse the shared browser profile: %s", exc)
+
+
+def _launch(pw, headless: bool, profile: str):
     """Prefer the user's real Chrome; fall back to Playwright's bundled build."""
-    profile_dir = DATA_DIR / "browser-profile"
+    profile_dir = browser_profile_dir(profile)
+    _claim_legacy_profile(profile_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     options = dict(
@@ -285,11 +331,12 @@ def _launch(pw, headless: bool):
         return pw.chromium.launch_persistent_context(**options)
 
 
-def _run_once(credentials: Credentials, headless: bool, interactive: bool) -> CheckResult:
+def _run_once(credentials: Credentials, headless: bool, interactive: bool,
+              profile: str) -> CheckResult:
     collector = _ResponseCollector()
 
     with sync_playwright() as pw:
-        context = _launch(pw, headless)
+        context = _launch(pw, headless, profile)
         page = None
         try:
             page = context.new_page()
@@ -317,8 +364,11 @@ def _run_once(credentials: Credentials, headless: bool, interactive: bool) -> Ch
                                 summary="נדרש אימות CAPTCHA - הבדיקה לא הושלמה",
                                 detail=(
                                     "reCAPTCHA asked for an image challenge. Run "
-                                    f"'{INVOCATION} check --profile <name>' yourself "
-                                    "and answer it in the window that opens."
+                                    f"'{INVOCATION} check --all --if-stale 12' "
+                                    "yourself and answer it in the window that "
+                                    "opens. --profile is avoided here on purpose: "
+                                    "a Hebrew nickname cannot be typed into a "
+                                    "Windows console."
                                 ),
                                 retryable=False,
                             )
@@ -381,6 +431,7 @@ def _run_once(credentials: Credentials, headless: bool, interactive: bool) -> Ch
 
 def check(
     credentials: Credentials,
+    profile: str,
     headless: bool = False,
     interactive: bool = True,
     attempts: int = 2,
@@ -395,7 +446,8 @@ def check(
     result = CheckResult(status=STATUS_ERROR, summary="הבדיקה לא רצה", detail="")
 
     for attempt in range(1, attempts + 1):
-        result = _run_once(credentials, headless=headless, interactive=interactive)
+        result = _run_once(credentials, headless=headless, interactive=interactive,
+                           profile=profile)
         if result.ok or not result.retryable:
             return result
         if attempt < attempts:

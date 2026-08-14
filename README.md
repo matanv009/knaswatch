@@ -163,17 +163,25 @@ challenges — it avoids provoking them:
   the default for this reason.
 - **Real Chrome with a persistent profile**, kept in the data folder, so the
   session looks like a returning user rather than a fresh robot every time.
+- **A separate browser profile per person.** One browser submitting several
+  different identity documents is a pattern no household produces, and a shared
+  cookie jar would let one person's damaged score be inherited by everybody else.
 - **Roughly one visit per day per person**, at a time that varies by up to 20
   minutes. Frequency is the single biggest factor: several submissions in a few
   minutes will get you challenged, a daily check generally will not.
+- **A few minutes between people in the same run**, rather than one after
+  another within seconds.
 - **Three scheduled attempts a day, not three visits.** The later runs use
-  `--if-stale 20` and exit immediately once the day's check has succeeded. They
+  `--if-stale 12` and exit immediately once the day's check has succeeded. They
   exist only so that an occasional challenge costs a few hours instead of the
   whole day.
 
 If a challenge does appear while you are at the machine, answer it once in the
 window; that also improves how the profile is scored afterwards. Unattended runs
-never sit waiting for a click.
+never sit waiting for a click — they send one Telegram message and stop. To
+finish an interrupted check afterwards, open `knaswatch.bat` and choose **12**
+(*Finish an interrupted check*): whoever already succeeded today is skipped, so
+only the person who was challenged is visited again.
 
 `knaswatch.bat schedule --at 09:00` creates a Windows scheduled task with two
 deliberate settings:

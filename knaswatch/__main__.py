@@ -7,8 +7,10 @@ arguments, because those are visible to any other process on the machine.
 
 import argparse
 import getpass
+import random
 import secrets
 import sys
+import time
 
 from . import INVOCATION, __version__
 from .checker import (
@@ -39,6 +41,19 @@ from . import state, vault
 log = None  # set in main()
 
 FAILURES_BEFORE_ALERT = 2
+
+# How long to wait between people in the same run, in seconds. Several identity
+# documents submitted from one machine seconds apart is a burst no household
+# produces; a few minutes apart is simply two people who both drive. The gap is
+# kept short when somebody is watching the window, because they are waiting for
+# it - the unattended nightly run is the one that has to look unhurried.
+GAP_UNATTENDED = (120.0, 420.0)
+GAP_INTERACTIVE = (15.0, 45.0)
+
+
+def _profile_gap_seconds(interactive: bool) -> float:
+    low, high = GAP_INTERACTIVE if interactive else GAP_UNATTENDED
+    return random.uniform(low, high)
 
 
 def _prompt_secret(label: str, validator, error_message: str) -> str:
@@ -420,6 +435,7 @@ def cmd_check(args) -> int:
     telegram = vault.load_telegram()
     recipients = vault.load_recipients()
     exit_code = 0
+    visited = False  # whether this run has already been to the site
     # A scheduled run has nobody sitting in front of it, so it must not stop and
     # wait for a CAPTCHA to be answered.
     interactive = not args.unattended
@@ -441,8 +457,17 @@ def cmd_check(args) -> int:
                 log.info("Skipping %s - checked %.1fh ago.", profile, age)
                 continue
 
+        # Only after the skip above: a profile that was skipped never touched the
+        # site, so there is nothing to space this one out from.
+        if visited:
+            gap = _profile_gap_seconds(interactive)
+            log.info("Waiting %.0fs before the next person.", gap)
+            time.sleep(gap)
+
         log.info("Checking %s...", profile)
-        result = check(credentials, headless=args.headless, interactive=interactive)
+        result = check(credentials, profile, headless=args.headless,
+                       interactive=interactive)
+        visited = True
         previous = state.get_profile_state(profile)
 
         if result.status in (STATUS_ERROR, STATUS_CHALLENGE):
