@@ -51,6 +51,9 @@ Your ID and licence numbers are the whole point of the design.
   of 7 or more digits, so a careless future log line cannot leak one either.
 - **Settings live outside this folder**, in `%LOCALAPPDATA%\KnasWatch`, so nothing
   can be committed by accident.
+- **You can take them off the machine again.** `knaswatch.bat uninstall` deletes
+  the vault entries, the settings and the browser sessions — deleting the folder
+  alone would leave the numbers behind in Credential Manager.
 
 Full threat model, including what this does *not* protect against: [SECURITY.md](SECURITY.md).
 
@@ -109,7 +112,10 @@ The wizard walks through three things:
 
 1. **Profiles.** One per person — you, a partner, a parent. Each has a nickname
    and their own ID and licence number. The nickname is all that ever appears in
-   notifications.
+   notifications. On Windows, prefer plain Latin letters (`Barak`, `Dad`): a
+   console window lays Hebrew out left to right, so a Hebrew nickname is shown
+   back to front and cannot be typed in at all. Nothing breaks if you use Hebrew
+   anyway — every command that needs a person offers a numbered list.
 2. **Telegram.** Message [@BotFather](https://t.me/BotFather), send `/newbot`,
    and paste the token. KnasWatch then shows a pairing code on screen — send it
    to your bot from your phone, and only the chat that sends that exact code is
@@ -119,17 +125,54 @@ The wizard walks through three things:
 
 ## Use
 
+Double-click `knaswatch.bat` for the menu, or name a command:
+
 ```bash
-knaswatch.bat telegram            # connect Telegram notifications
-knaswatch.bat recipients          # who currently gets the alerts
-knaswatch.bat add-recipient       # also alert someone else's Telegram
-knaswatch.bat check --all         # check everyone now
-knaswatch.bat check --profile אבא  # check one person
-knaswatch.bat status              # configuration and last results
-knaswatch.bat add-profile         # add another person
-knaswatch.bat remove-profile אבא   # delete a person and their stored numbers
-knaswatch.bat unschedule          # remove the daily task
+knaswatch.bat telegram          # connect Telegram notifications
+knaswatch.bat recipients        # who currently gets the alerts
+knaswatch.bat add-recipient     # also alert someone else's Telegram
+knaswatch.bat check --all       # check everyone now
+knaswatch.bat status            # configuration and last results
+knaswatch.bat add-profile       # add another person
+knaswatch.bat change-numbers    # correct someone's ID or licence number
+knaswatch.bat remove-profile    # delete one person, leaving the others
+knaswatch.bat unschedule        # remove the daily task
+knaswatch.bat uninstall         # delete everything KnasWatch stored
 ```
+
+`change-numbers`, `remove-profile` and `rename-profile` ask which person from a
+numbered list when you do not name one — which is the only workable way to pick
+somebody whose nickname is Hebrew.
+
+### "No match between the ID and the licence number"
+
+That message from the site means the two numbers do not belong to the same
+person. It is the ordinary result of a typo: they are hidden while being typed,
+and for a household they are entered one person after another. Fix it with
+option **13** in the menu (`change-numbers`), which changes one number or both
+and leaves the rest of that person's setup — their alert routing, their place in
+the schedule — alone. The stored result is cleared at the same time, so the next
+check is a real one rather than one skipped as "already done today".
+
+KnasWatch also refuses to submit at all unless the form still holds exactly what
+it typed. The site's page rewrites its own fields as it renders, and a value
+that lands mid-render used to be replaced silently — which is how one person's
+ID could be submitted together with another person's licence number.
+
+### Removing a person, or all of it
+
+`remove-profile` (menu **14**) deletes one person: their numbers, their results
+and their saved browser session. Everyone else keeps working, and anyone who was
+subscribed only to that person stops receiving alerts rather than silently
+starting to receive everybody's.
+
+`uninstall` (menu **15**) undoes the installation: every stored number, the
+Telegram token and recipient list, the scheduled task, and the whole data folder
+including the saved browser sessions and the log. It asks you to type
+`UNINSTALL` in full first, and it tells you if anything could not be removed.
+What it deliberately leaves alone is this folder — delete it yourself — and the
+bot you made in Telegram, which you remove with `/deletebot` at
+[@BotFather](https://t.me/BotFather).
 
 ## Scheduling
 

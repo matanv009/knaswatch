@@ -16,6 +16,14 @@ from .state import LOG_FILE, ensure_dir
 # Fine amounts are 3-4 digits, so ordinary output is unaffected.
 _LONG_DIGIT_RUN = re.compile(r"\d{7,}")
 
+# For things worth keeping but not worth showing: chiefly the site's own error
+# text, which is Hebrew. A Windows console has no bidirectional text support, so
+# it prints Hebrew back to front - readable enough to be trusted, wrong enough to
+# be misread. This logger is a child of "knaswatch" with propagation off, so its
+# records reach the log file and stop there.
+file_log = logging.getLogger("knaswatch.detail")
+file_log.propagate = False
+
 
 def redact(text: str) -> str:
     return _LONG_DIGIT_RUN.sub(lambda m: "*" * len(m.group()), text)
@@ -50,6 +58,19 @@ def make_console_safe() -> None:
             pass
 
 
+def close_log_file() -> None:
+    """Let go of the log file, so the data directory can be deleted.
+
+    Windows refuses to delete a file that is still open, and the uninstaller
+    would otherwise fail on the one file it is itself holding.
+    """
+    for logger in (logging.getLogger("knaswatch"), file_log):
+        for handler in list(logger.handlers):
+            if isinstance(handler, RotatingFileHandler):
+                logger.removeHandler(handler)
+                handler.close()
+
+
 def setup_logging(verbose: bool = False) -> logging.Logger:
     ensure_dir()
     make_console_safe()
@@ -67,6 +88,9 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     file_handler.setFormatter(formatter)
     file_handler.addFilter(redactor)
     logger.addHandler(file_handler)
+
+    file_log.setLevel(logging.DEBUG if verbose else logging.INFO)
+    file_log.addHandler(file_handler)
 
     # Under pythonw.exe there is no console at all and sys.stderr is None;
     # attaching a stream handler to it would raise on every single record.

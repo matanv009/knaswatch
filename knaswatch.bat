@@ -28,6 +28,10 @@ exit /b %ERRORLEVEL%
 
 
 :menu
+REM UTF-8, so a Hebrew nickname shows as Hebrew rather than as question marks.
+REM The console still lays it out left to right - which is why every message
+REM KnasWatch prints is in English.
+chcp 65001 >nul
 cls
 echo.
 echo   ==========================================
@@ -46,10 +50,13 @@ echo     9.  Daily "all clear" message on/off
 echo    10.  Turn on the daily automatic check
 echo    11.  Turn off the daily automatic check
 echo    12.  Finish an interrupted check (after a CAPTCHA message)
+echo    13.  Correct someone's ID or licence number
+echo    14.  Remove one person (everyone else stays)
+echo    15.  Uninstall - delete everything KnasWatch stored
 echo     0.  Exit
 echo.
 set "CHOICE="
-set /p "CHOICE=  Choose 0-12 and press Enter: "
+set /p "CHOICE=  Choose 0-15 and press Enter: "
 
 REM Empty means the user just pressed Enter, or that there is no interactive
 REM input at all (piped/redirected). Exit rather than loop forever.
@@ -69,10 +76,13 @@ if "%CHOICE%"=="11" set "ARGS=unschedule"      & goto :run
 REM --if-stale skips whoever already succeeded today, so answering a CAPTCHA for
 REM one person does not send the rest of the household back to the site.
 if "%CHOICE%"=="12" set "ARGS=check --all --if-stale 12" & goto :run
+if "%CHOICE%"=="13" set "ARGS=change-numbers"  & goto :run
+if "%CHOICE%"=="14" set "ARGS=remove-profile"  & goto :run
+if "%CHOICE%"=="15" set "ARGS=uninstall"       & goto :run
 if "%CHOICE%"=="0" exit /b 0
 
 echo.
-echo   Please type a number from 0 to 12.
+echo   Please type a number from 0 to 15.
 echo.
 pause
 goto :menu

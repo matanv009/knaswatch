@@ -9,6 +9,7 @@ import argparse
 import getpass
 import random
 import secrets
+import shutil
 import sys
 import time
 
@@ -18,9 +19,10 @@ from .checker import (
     STATUS_CLEAR,
     STATUS_ERROR,
     STATUS_FINES,
+    browser_profile_dir,
     check,
 )
-from .logging_setup import setup_logging
+from .logging_setup import close_log_file, file_log, setup_logging
 from .notify import (
     NotifyError,
     broadcast,
@@ -42,6 +44,10 @@ log = None  # set in main()
 
 FAILURES_BEFORE_ALERT = 2
 
+# Typed in full to confirm an uninstall. A y/n prompt is one stray keystroke away
+# from deleting numbers that are only stored in one place.
+UNINSTALL_WORD = "UNINSTALL"
+
 # How long to wait between people in the same run, in seconds. Several identity
 # documents submitted from one machine seconds apart is a burst no household
 # produces; a few minutes apart is simply two people who both drive. The gap is
@@ -56,6 +62,10 @@ def _profile_gap_seconds(interactive: bool) -> float:
     return random.uniform(low, high)
 
 
+BAD_ID = "That is not a valid Israeli ID number (check digit failed)."
+BAD_LICENCE = "A driver's licence number is up to 7 digits."
+
+
 def _prompt_secret(label: str, validator, error_message: str) -> str:
     while True:
         value = normalize_digits(getpass.getpass(f"{label} (hidden): "))
@@ -64,23 +74,42 @@ def _prompt_secret(label: str, validator, error_message: str) -> str:
         print(f"  ! {error_message}")
 
 
+def _pick_profile(action: str) -> str:
+    """Choose one person from a numbered list, or return "" if nothing was chosen.
+
+    Nicknames are usually real Hebrew names, and Hebrew cannot be typed into a
+    Windows console at all - so every command that asked for one by typing was
+    unusable on the machine it was meant to run on. A number always works.
+    """
+    profiles = state.list_profiles()
+    if not profiles:
+        print(f"No profiles configured yet. Run:  {INVOCATION} setup")
+        return ""
+
+    print(f"\nWhich person do you want to {action}?")
+    for index, name in enumerate(profiles, 1):
+        print(f"    {index}. {name}")
+    answer = input(f"  Choose 1-{len(profiles)} (anything else cancels): ").strip()
+
+    if not answer.isdigit() or not 1 <= int(answer) <= len(profiles):
+        print("  Cancelled; nothing was changed.")
+        return ""
+    return profiles[int(answer) - 1]
+
+
 def cmd_add_profile(args) -> int:
+    if sys.platform == "win32":
+        print("Tip: a nickname written in Hebrew comes out back to front in this")
+        print("window, so plain letters (Barak, Dad, Mum) are easier to live with.")
     name = args.name or input("Profile nickname (e.g. Dad, Mum, me): ").strip()
     if not is_valid_profile_name(name):
         print("Invalid nickname.")
         return 1
 
     print(f"\nEntering details for '{name}'. Typing is hidden and nothing is written to disk.")
-    id_number = _prompt_secret(
-        "  ID number (תעודת זהות)",
-        is_valid_israeli_id,
-        "That is not a valid Israeli ID number (check digit failed).",
-    )
-    licence = _prompt_secret(
-        "  Driver's licence number",
-        is_plausible_license,
-        "Expected 6-9 digits.",
-    )
+    id_number = _prompt_secret("  ID number", is_valid_israeli_id, BAD_ID)
+    licence = _prompt_secret("  Driver's licence number", is_plausible_license,
+                             BAD_LICENCE)
 
     vault.save_credentials(name, id_number, licence)
     state.add_profile(name)
@@ -258,7 +287,9 @@ def _retarget_recipients(old: str, new=None) -> None:
 
 def cmd_rename_profile(args) -> int:
     profiles = state.list_profiles()
-    old = args.old or input("Current nickname: ").strip()
+    old = args.old or _pick_profile("rename")
+    if not old:
+        return 1
     if old not in profiles:
         print(f"No profile named '{old}'. Known profiles: {', '.join(profiles) or 'none'}")
         return 1
@@ -306,15 +337,167 @@ def cmd_config(args) -> int:
     return 0
 
 
-def cmd_remove_profile(args) -> int:
-    name = args.name
+def cmd_change_numbers(args) -> int:
+    """Correct the stored ID or licence number for one person.
+
+    Wrong numbers are not a rare accident: they are hidden while being typed,
+    two people's are entered one after the other, and the site answers a mixed
+    pair with a flat "no match" rather than saying which of the two is wrong.
+    Before this existed the only way out was to delete the person and add them
+    again, which also threw away their alert routing.
+    """
+    name = args.name or _pick_profile("correct")
+    if not name:
+        return 1
     if name not in state.list_profiles():
         print(f"No profile named '{name}'.")
         return 1
+
+    stored = vault.load_credentials(name)
+    if stored is None:
+        print(f"Profile '{name}' has no stored numbers. Add it again with:  "
+              f"{INVOCATION} add-profile")
+        return 1
+
+    change_id, change_licence = args.id, args.licence
+    if not (change_id or change_licence):
+        print(f"\nWhat needs correcting for '{name}'?")
+        print("    1. The ID number")
+        print("    2. The driver's licence number")
+        print("    3. Both")
+        answer = input("  Choose 1-3 (anything else cancels): ").strip()
+        if answer not in ("1", "2", "3"):
+            print("  Cancelled; nothing was changed.")
+            return 1
+        change_id, change_licence = answer in ("1", "3"), answer in ("2", "3")
+
+    print("\nTyping is hidden, and nothing is written to disk.")
+    id_number = (_prompt_secret("  New ID number", is_valid_israeli_id, BAD_ID)
+                 if change_id else stored.id_number)
+    licence = (_prompt_secret("  New driver's licence number", is_plausible_license,
+                              BAD_LICENCE)
+               if change_licence else stored.license_number)
+
+    if (id_number, licence) == (stored.id_number, stored.license_number):
+        print(f"\nThat is what was already stored for '{name}'; nothing was changed.")
+        return 0
+
+    vault.save_credentials(name, id_number, licence)
+    # The recorded history belongs to the old numbers - which, when this command
+    # is used, may well have been somebody else's. Keeping it would let
+    # --if-stale skip the first run with the corrected numbers, and would compare
+    # the next result against a fingerprint that describes a different person.
+    state.reset_profile(name)
+
+    changed = " and ".join(
+        part for part, wanted in (("ID number", change_id),
+                                  ("licence number", change_licence)) if wanted
+    )
+    print(f"\n  Updated the {changed} for '{name}' in the credential vault.")
+    print("  Their previous results were cleared, so the next check starts fresh.")
+    print(f"  Run one now with:  {INVOCATION} check --all")
+    return 0
+
+
+def cmd_remove_profile(args) -> int:
+    """Delete one person, leaving the rest of the installation alone."""
+    name = args.name or _pick_profile("remove")
+    if not name:
+        return 1
+    if name not in state.list_profiles():
+        print(f"No profile named '{name}'.")
+        return 1
+
+    if not args.yes:
+        print(f"\nThis deletes '{name}': their ID and licence numbers, their "
+              "results,")
+        print("and their saved browser session. Everyone else is left untouched.")
+        if input(f"  Type the word yes to delete '{name}': ").strip().lower() != "yes":
+            print("  Cancelled; nothing was deleted.")
+            return 1
+
     vault.delete_credentials(name)
     state.remove_profile(name)
     _retarget_recipients(name)
-    print(f"Profile '{name}' and its stored numbers were deleted.")
+    # Their browser profile holds the cookies from their own visits to the site;
+    # leaving it behind would keep identifying traffic on the machine for a
+    # person the user has just asked to be forgotten.
+    shutil.rmtree(browser_profile_dir(name), ignore_errors=True)
+
+    remaining = state.list_profiles()
+    print(f"\n  Deleted '{name}' and everything stored for them.")
+    print(f"  Still watched: {', '.join(remaining) if remaining else 'nobody'}")
+    return 0
+
+
+def cmd_uninstall(args) -> int:
+    """Undo the whole installation: every number, setting, result and schedule.
+
+    What is deleted lives in three places - the OS credential vault, the data
+    directory and the Windows task scheduler - so "delete the folder" was never
+    enough, and there was no way for somebody to take their identifying numbers
+    back off a machine short of hunting through Credential Manager by hand.
+    """
+    profiles = state.list_profiles()
+    configured = vault.load_telegram() is not None
+
+    print("Uninstall KnasWatch\n")
+    print("This permanently deletes:")
+    print(f"  - the stored ID and licence numbers for {len(profiles)} person(s)"
+          + (f": {', '.join(profiles)}" if profiles else ""))
+    print("  - the Telegram bot token and the list of who gets alerts "
+          f"({'configured' if configured else 'not configured'})")
+    if sys.platform == "win32":
+        print(f"  - the daily scheduled task ({scheduler.task_status()})")
+    print(f"  - everything under {state.DATA_DIR},")
+    print("    including the saved browser sessions and the log")
+    print("\nIt does not delete this folder, and it does not delete the bot you")
+    print("made in Telegram - message @BotFather and /deletebot for that.")
+
+    if not args.yes:
+        if input(f"\n  Type {UNINSTALL_WORD} to confirm: ").strip() != UNINSTALL_WORD:
+            print("  Cancelled; nothing was deleted.")
+            return 1
+
+    problems = []
+
+    # The scheduled task goes first. It runs whether or not anybody is watching,
+    # and a run that started mid-uninstall would write config and state files
+    # back out behind us.
+    if sys.platform == "win32":
+        scheduler.delete_task()
+        status = scheduler.task_status()
+        if status != "not scheduled":
+            problems.append(f"the scheduled task is still there ({status})")
+
+    for name in profiles:
+        try:
+            vault.delete_credentials(name)
+        except vault.VaultError as exc:
+            problems.append(f"the numbers for '{name}' are still in the vault: {exc}")
+    try:
+        vault.delete_telegram()
+    except vault.VaultError as exc:
+        problems.append(f"the Telegram settings are still in the vault: {exc}")
+
+    # Windows will not delete a file that is still open, and the log file is one
+    # this process is holding itself.
+    close_log_file()
+    try:
+        shutil.rmtree(state.DATA_DIR)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        problems.append(f"{state.DATA_DIR} could not be deleted: {exc}")
+
+    if problems:
+        print("\n  ! Everything else was deleted, but not these:")
+        for problem in problems:
+            print(f"      - {problem}")
+        return 1
+
+    print("\n  Done. Nothing KnasWatch stored is left on this computer.")
+    print("  You can now delete this folder if you want the program gone too.")
     return 0
 
 
@@ -472,7 +655,11 @@ def cmd_check(args) -> int:
 
         if result.status in (STATUS_ERROR, STATUS_CHALLENGE):
             failures = previous.get("consecutive_failures", 0) + 1
-            log.error("%s: %s (%s)", profile, result.summary, result.detail)
+            log.error("%s: %s", profile, result.summary)
+            # The detail is usually the site's own wording, which is Hebrew, and
+            # a Windows console prints Hebrew back to front. It belongs in the
+            # log file, where it can be read.
+            file_log.info("%s: %s | %s", profile, result.summary, result.detail)
             exit_code = 1
         else:
             failures = 0
@@ -621,9 +808,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="flip the daily all-clear message on or off")
     p.set_defaults(func=cmd_config)
 
+    p = sub.add_parser("change-numbers",
+                       help="correct a person's stored ID or licence number")
+    p.add_argument("name", nargs="?")
+    p.add_argument("--id", action="store_true", help="change the ID number")
+    p.add_argument("--licence", "--license", dest="licence", action="store_true",
+                   help="change the driver's licence number")
+    p.set_defaults(func=cmd_change_numbers)
+
     p = sub.add_parser("remove-profile", help="delete a person and their stored numbers")
-    p.add_argument("name")
+    p.add_argument("name", nargs="?")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.set_defaults(func=cmd_remove_profile)
+
+    p = sub.add_parser("uninstall",
+                       help="delete every number, setting and result on this computer")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p.set_defaults(func=cmd_uninstall)
 
     p = sub.add_parser("telegram", help="configure Telegram notifications")
     p.add_argument("--chat-id", help="set the chat id manually")

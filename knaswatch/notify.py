@@ -201,10 +201,24 @@ def format_result(profile: str, result: CheckResult) -> str:
             "פתור את האימות בחלון שנפתח, והבדיקה תמשיך מעצמה."
         )
 
-    return (
-        f"⚠️ <b>KnasWatch</b> - הבדיקה עבור <b>{name}</b> נכשלה\n\n"
-        f"{html.escape(result.summary or '')}"
-    )
+    # Hebrew for the phone, English for the console: `summary` is written for a
+    # Windows console, which prints Hebrew back to front. Telegram has no such
+    # problem, so it gets the Hebrew wording whenever there is one.
+    body = html.escape(result.summary_he or result.summary or "")
+
+    # A non-retryable error is the site saying the two numbers do not belong
+    # together - the one failure the reader can actually fix, so it is worth
+    # saying where. Every other error is ours or the site's to sort out.
+    if not result.retryable:
+        if sys.platform == "win32":
+            how = ("פתח את <code>knaswatch.bat</code> ובחר באפשרות 13 "
+                   "(<code>Correct someone's ID or licence number</code>).")
+        else:
+            how = ("הרץ במחשב:\n"
+                   f"<code>{html.escape(INVOCATION)} change-numbers</code>")
+        body += f"\n\nלתיקון המספרים {how}"
+
+    return f"⚠️ <b>KnasWatch</b> - הבדיקה עבור <b>{name}</b> נכשלה\n\n{body}"
 
 
 __all__ = [

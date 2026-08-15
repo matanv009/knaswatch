@@ -24,7 +24,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
 from . import INVOCATION
+from .logging_setup import file_log
 from .state import DATA_DIR
+from .validate import normalize_digits
 from .vault import Credentials
 
 log = logging.getLogger("knaswatch")
@@ -48,6 +50,12 @@ LEGACY_PROFILE_DIR = DATA_DIR / "browser-profile"
 NAV_TIMEOUT_MS = 60_000
 SUBMIT_WAIT_MS = 25_000
 SOLVE_WAIT_MS = 180_000  # how long to leave a challenge on screen for the user
+
+# How many times to type the two numbers in before giving up on the form.
+FILL_ATTEMPTS = 3
+# Time given to the page to re-render or restore fields after they are filled,
+# before the values are read back.
+FILL_SETTLE_MS = 400
 
 STATUS_CLEAR = "clear"
 STATUS_FINES = "fines"
@@ -77,7 +85,13 @@ _LABEL_KEYS = (
 @dataclass
 class CheckResult:
     status: str
+    # English, and deliberately so: `summary` is what reaches the console, the
+    # log file and status.json, and a Windows console has no bidirectional text
+    # support at all - it prints Hebrew back to front, one line at a time. The
+    # Hebrew wording lives in `summary_he`, for Telegram, which renders it
+    # properly.
     summary: str
+    summary_he: str = ""
     fines: list[dict] = field(default_factory=list)
     total_amount: Optional[float] = None
     detail: str = ""
@@ -204,7 +218,8 @@ def _classify(collector: _ResponseCollector) -> CheckResult:
         detail = "; ".join(collector.http_errors) or "no response from the submit endpoint"
         return CheckResult(
             status=STATUS_ERROR,
-            summary="הבדיקה נכשלה - לא התקבלה תשובה מהאתר",
+            summary="the check failed - the site never answered",
+            summary_he="הבדיקה נכשלה - לא התקבלה תשובה מהאתר",
             detail=detail,
         )
 
@@ -216,19 +231,23 @@ def _classify(collector: _ResponseCollector) -> CheckResult:
         # "Nothing owed" is reported as a failed submit with an explanatory
         # message, so it has to be told apart from a genuine error.
         if _looks_like_no_debt(errors + warnings):
-            return CheckResult(status=STATUS_CLEAR, summary="לא נמצאו קנסות",
+            return CheckResult(status=STATUS_CLEAR, summary="no fines found",
                                detail=" ".join(errors + warnings))
         if input_errors or _looks_like_mismatch(errors):
             # Re-submitting the same rejected numbers cannot start working.
             return CheckResult(
                 status=STATUS_ERROR,
-                summary="הפרטים נדחו על ידי האתר - בדוק ת.ז. ומספר רישיון",
+                summary=("the site rejected the details - this ID and this licence "
+                         f"number do not belong together ({INVOCATION} "
+                         "change-numbers)"),
+                summary_he="הפרטים נדחו על ידי האתר - אין התאמה בין ת.ז. למספר הרישיון",
                 detail=" ".join(input_errors or errors),
                 retryable=False,
             )
         return CheckResult(
             status=STATUS_ERROR,
-            summary="הבדיקה נכשלה - האתר החזיר שגיאה",
+            summary="the check failed - the site returned an error",
+            summary_he="הבדיקה נכשלה - האתר החזיר שגיאה",
             detail=" ".join(errors + warnings) or "unknown error",
         )
 
@@ -238,20 +257,23 @@ def _classify(collector: _ResponseCollector) -> CheckResult:
 
     if not fines:
         if collector.basket or _looks_like_no_debt(warnings):
-            return CheckResult(status=STATUS_CLEAR, summary="לא נמצאו קנסות",
+            return CheckResult(status=STATUS_CLEAR, summary="no fines found",
                                detail="basket returned no chargeable items")
         # Identification worked but the basket never arrived. Report a failure
         # rather than an all-clear, so a site change can never look like good news.
         return CheckResult(
             status=STATUS_ERROR,
-            summary="הבדיקה נכשלה - ההזדהות הצליחה אך רשימת החובות לא נטענה",
+            summary="the check failed - identification worked but the list of "
+                    "debts never loaded",
+            summary_he="הבדיקה נכשלה - ההזדהות הצליחה אך רשימת החובות לא נטענה",
             detail="no basket response captured",
         )
 
     total = round(sum(f["amount"] for f in fines), 2)
     return CheckResult(
         status=STATUS_FINES,
-        summary=f"נמצאו {len(fines)} חובות בסך {total:,.2f} ש\"ח",
+        summary=f"{len(fines)} debt(s) totalling {total:,.2f} ILS",
+        summary_he=f"נמצאו {len(fines)} חובות בסך {total:,.2f} ש\"ח",
         fines=fines,
         total_amount=total,
     )
@@ -311,6 +333,51 @@ def _claim_legacy_profile(target: Path) -> None:
         log.debug("Could not reuse the shared browser profile: %s", exc)
 
 
+def _fields_match(page, credentials: Credentials) -> bool:
+    """True when the form currently holds exactly the numbers we typed.
+
+    Compared as bare digits, because a form that reformats what it is given
+    (spaces, a leading zero dropped from the display) is still holding the right
+    number, and refusing to submit over that would break a working check.
+    """
+    return (
+        normalize_digits(page.input_value(FIELD_ID))
+        == normalize_digits(credentials.id_number)
+        and normalize_digits(page.input_value(FIELD_LICENCE))
+        == normalize_digits(credentials.license_number)
+    )
+
+
+def _fill_identity(page, credentials: Credentials) -> bool:
+    """Type both numbers in, and confirm the form still holds them.
+
+    This page is a single-page app: choosing the identification type re-renders
+    the field group, and it restores whatever it remembers of an earlier visit.
+    A value typed while that is happening is quietly replaced afterwards - which
+    is how one household ended up submitting one person's ID together with
+    another person's licence number. The site answers such a pair with "no
+    match", so the bug reads like a typo and can sit there for weeks.
+
+    Nothing is submitted unless both fields read back what was typed, so the
+    worst case is now a reported failure rather than a wrong answer about the
+    wrong person.
+    """
+    for attempt in range(1, FILL_ATTEMPTS + 1):
+        page.fill(FIELD_ID, "")
+        page.fill(FIELD_LICENCE, "")
+        page.fill(FIELD_ID, credentials.id_number)
+        page.fill(FIELD_LICENCE, credentials.license_number)
+        page.wait_for_timeout(FILL_SETTLE_MS)
+
+        if _fields_match(page, credentials):
+            if attempt > 1:
+                log.info("The form kept the details on attempt %d.", attempt)
+            return True
+        log.warning("The form did not keep the details as typed; retyping them.")
+
+    return False
+
+
 def _launch(pw, headless: bool, profile: str):
     """Prefer the user's real Chrome; fall back to Playwright's bundled build."""
     profile_dir = browser_profile_dir(profile)
@@ -345,11 +412,20 @@ def _run_once(credentials: Credentials, headless: bool, interactive: bool,
 
             page.goto(URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
             page.wait_for_selector("select", timeout=NAV_TIMEOUT_MS)
+            # select_option raises if this value is not on offer, so the
+            # identification type needs no separate verification; the two number
+            # fields do, because the page rewrites those itself.
             page.select_option("select", SERVICE_VALUE)
 
             page.wait_for_selector(FIELD_ID, state="visible", timeout=NAV_TIMEOUT_MS)
-            page.fill(FIELD_ID, credentials.id_number)
-            page.fill(FIELD_LICENCE, credentials.license_number)
+            if not _fill_identity(page, credentials):
+                return CheckResult(
+                    status=STATUS_ERROR,
+                    summary="the form kept changing the details back; nothing "
+                            "was submitted",
+                    summary_he="הטופס לא שמר את הפרטים שהוקלדו - לא נשלח דבר",
+                    detail="the identity fields did not read back what was typed",
+                )
             page.click("input[type=submit]")
 
             deadline = time.monotonic() + SUBMIT_WAIT_MS / 1000
@@ -361,7 +437,8 @@ def _run_once(credentials: Credentials, headless: bool, interactive: bool,
                         if not interactive:
                             return CheckResult(
                                 status=STATUS_CHALLENGE,
-                                summary="נדרש אימות CAPTCHA - הבדיקה לא הושלמה",
+                                summary="a CAPTCHA was required - the check did "
+                                        "not finish",
                                 detail=(
                                     "reCAPTCHA asked for an image challenge. Run "
                                     f"'{INVOCATION} check --all --if-stale 12' "
@@ -383,13 +460,14 @@ def _run_once(credentials: Credentials, headless: bool, interactive: bool,
                             continue
                         return CheckResult(
                             status=STATUS_CHALLENGE,
-                            summary="נדרש אימות CAPTCHA - לא נענה בזמן",
+                            summary="a CAPTCHA was required and not answered in time",
                             detail="the challenge was not answered in time",
                             retryable=False,
                         )
                     return CheckResult(
                         status=STATUS_ERROR,
-                        summary="הבדיקה נכשלה - האתר לא הגיב בזמן",
+                        summary="the check failed - the site did not answer in time",
+                        summary_he="הבדיקה נכשלה - האתר לא הגיב בזמן",
                         detail="timed out waiting for the submit response",
                     )
                 page.wait_for_timeout(500)
@@ -410,19 +488,21 @@ def _run_once(credentials: Credentials, headless: bool, interactive: bool,
             if page is not None and _challenge_visible(page):
                 return CheckResult(
                     status=STATUS_CHALLENGE,
-                    summary="נדרש אימות CAPTCHA - הבדיקה לא הושלמה",
+                    summary="a CAPTCHA was required - the check did not finish",
                     detail="reCAPTCHA served an image challenge",
                     retryable=False,
                 )
             return CheckResult(
                 status=STATUS_ERROR,
-                summary="הבדיקה נכשלה - האתר לא הגיב בזמן",
+                summary="the check failed - the site did not answer in time",
+                summary_he="הבדיקה נכשלה - האתר לא הגיב בזמן",
                 detail="timed out waiting for the site",
             )
         except PlaywrightError as exc:
             return CheckResult(
                 status=STATUS_ERROR,
-                summary="הבדיקה נכשלה - שגיאת דפדפן",
+                summary="the check failed - browser error",
+                summary_he="הבדיקה נכשלה - שגיאת דפדפן",
                 detail=str(exc)[:300],
             )
         finally:
@@ -443,7 +523,8 @@ def check(
     carry retryable=False, set where they are classified, so this loop never has
     to guess from the wording of a message.
     """
-    result = CheckResult(status=STATUS_ERROR, summary="הבדיקה לא רצה", detail="")
+    result = CheckResult(status=STATUS_ERROR, summary="the check did not run",
+                         summary_he="הבדיקה לא רצה", detail="")
 
     for attempt in range(1, attempts + 1):
         result = _run_once(credentials, headless=headless, interactive=interactive,
@@ -452,8 +533,11 @@ def check(
             return result
         if attempt < attempts:
             delay = 5 * attempt + random.uniform(0, 3)
+            # The site's own text is Hebrew, and a Windows console prints Hebrew
+            # back to front, so the detail goes to the log file only.
             log.info("Attempt %d failed (%s); retrying in %.0fs",
-                     attempt, result.detail, delay)
+                     attempt, result.summary, delay)
+            file_log.info("Attempt %d detail: %s", attempt, result.detail)
             time.sleep(delay)
 
     return result

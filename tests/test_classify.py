@@ -37,7 +37,7 @@ def test_clean_record_is_clear():
     }
     result = _classify(collector_with(payload))
     assert result.status == STATUS_CLEAR, result
-    assert result.summary == "לא נמצאו קנסות"
+    assert result.summary == "no fines found", result
 
 
 def test_mismatched_details_is_rejection_not_clear():

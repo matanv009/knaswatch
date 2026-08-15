@@ -79,6 +79,19 @@ def rename_profile(old: str, new: str) -> None:
         save_state(state)
 
 
+def reset_profile(name: str) -> None:
+    """Forget a profile's results while keeping the profile itself.
+
+    Used when the stored numbers are corrected: the recorded outcome describes
+    whoever the old numbers belonged to. Left in place, last_success_at would
+    make --if-stale skip the first check with the new numbers, and the stored
+    fingerprint would be compared against a different person's fines.
+    """
+    state = load_state()
+    if state.pop(name, None) is not None:
+        save_state(state)
+
+
 def remove_profile(name: str) -> None:
     config = load_config()
     config["profiles"] = [p for p in config["profiles"] if p != name]
